@@ -16,6 +16,11 @@ float cmdMax = 0.3; // max addmisible input command value [mt/s]
 float toLow = -63; // min addmisible serial value for Sabertooth [int]
 float toHigh = 63; // max addmisible serial value for Sabertooth [int]
 
+// constants for kinematic equations
+#define PII 3.1415
+#define AXIS 0.385 //distance between wheels in meters
+#define RADIUS 0.0508 //wheel radius in meters (2 inch)
+
 ros::NodeHandle  nh;
 
 // For debugging: Publish serial command send to motor driver
@@ -23,9 +28,6 @@ std_msgs::Int16 left_wheel_serial_cmd;  // variable declaration
 ros::Publisher left_wheel_serial_cmd_pub("/left_wheel_serial_cmd", &left_wheel_serial_cmd);
 std_msgs::Int16 right_wheel_serial_cmd;  // variable declaration
 ros::Publisher right_wheel_serial_cmd_pub("/right_wheel_serial_cmd", &right_wheel_serial_cmd);
-
-float pi = 3.1415;
-float L = 0.1; //distance between wheels
 
 void cmdLeftWheelCB( const std_msgs::Int16& msg)
 // Read from topic cmd_left_wheel 
@@ -48,16 +50,21 @@ void cmdRightWheelCB( const std_msgs::Int16& msg)
 ros::Subscriber<std_msgs::Int16> subCmdLeft("cmd_left_wheel", cmdLeftWheelCB );
 ros::Subscriber<std_msgs::Int16> subCmdRight("cmd_right_wheel",cmdRightWheelCB );
 
-
 void cmdVelCB( const geometry_msgs::Twist& twist)
 // Read from topic cmd_vel 
-// The command signals are expected to be between -0.3 and 0.3 [mts/s]
+// The linear speed command signals are expected to be between -0.3 and 0.3 [mts/s]
 // Example: $ rostopic pub /cmd_vel geometry_msgs/Twist -r 3 -- '[0.2,0.0,0.0]' '[0.0, 0.0, 0.0]'
 // Motors should stop with a zero value.
 {
   int gain = 1;
-  float left_wheel_data = gain*(twist.linear.x - twist.angular.z*L);
-  float right_wheel_data = gain*(twist.linear.x + twist.angular.z*L);
+  // unicycle to differential drive equations
+  // linear.x = forward velocity (mt/sec), angular.z = angular velocity (rad/sec)
+  // angular velocity of wheels in rad/sec, counter-clock-wise and clock-wise respectively:
+  float left_wheel_radians = gain * (2 * twist.linear.x - twist.angular.z * AXIS) / (2 * RADIUS);
+  float right_wheel_radians = gain * (2 * twist.linear.x + twist.angular.z * AXIS) / (2 * RADIUS);
+  // transform angular velocities (rad/sec) to linear velocities (mt/sec):
+  float left_wheel_data = left_wheel_radians * RADIUS;
+  float right_wheel_data = right_wheel_radians * RADIUS;
   moveLeftMotor(left_wheel_data);  // move left motor
   moveRightMotor(right_wheel_data);  // move right motor
 }
