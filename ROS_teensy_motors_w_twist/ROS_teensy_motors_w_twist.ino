@@ -37,7 +37,7 @@ float toHigh = 63; // max addmisible serial value for Sabertooth [int]
 #define PII 3.1415
 #define AXIS 0.385 //distance between wheels in meters
 #define RADIUS 0.0508 //wheel radius in meters (2 inch)
-#define TICKS 2048 // encoder pulses per rotation 2x decoding
+#define TICKS 4096 // encoder pulses per rotation 4x decoding
 
 ros::NodeHandle  nh;
 
@@ -103,6 +103,7 @@ void cmdVelCB( const geometry_msgs::Twist& twist)
   // unicycle to differential drive equations
   // linear.x = forward velocity (mt/sec), angular.z = angular velocity (rad/sec)
   // angular velocity of wheels in rad/sec, counter-clock-wise and clock-wise respectively:
+  // complies to right-hand-rule: twist.angular.z > 0: turn left, twist.angular.z < 0 : turn right
   float left_wheel_radians = gain * (2 * twist.linear.x - twist.angular.z * AXIS) / (2 * RADIUS);
   float right_wheel_radians = gain * (2 * twist.linear.x + twist.angular.z * AXIS) / (2 * RADIUS);
   // transform angular velocities (rad/sec) to linear velocities (mt/sec):
