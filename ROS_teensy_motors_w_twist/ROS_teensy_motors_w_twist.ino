@@ -39,7 +39,8 @@ float toHigh = 63; // max addmisible serial value for Sabertooth [int]
 #define RADIUS 0.0508 //wheel radius in meters (2 inch)
 #define TICKS 4096 // encoder pulses per rotation 4x decoding
 
-ros::NodeHandle  nh;
+/* ROS handler, instantiate with bigger buffer memory */
+ros::NodeHandle_<ArduinoHardware, 25, 25, 512, 512> nh; 
 
 // For debugging: Publish serial command send to motor driver
 std_msgs::Int16 left_wheel_serial_cmd;  // variable declaration
