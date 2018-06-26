@@ -53,6 +53,9 @@ ros::Publisher left_wheel_vel_pub("/left_wheel_velocity", &left_wheel_vel);
 std_msgs::Float32 right_wheel_vel; // variable declaration
 ros::Publisher right_wheel_vel_pub("/right_wheel_velocity", &right_wheel_vel);
 
+geometry_msgs::Twist base_link_velocity;
+ros::Publisher base_link_velocity_pub("/base_link_velocity", &base_link_velocity);
+
 void timerIsr()
 // hardware timer to publish wheel velocity messages 
 {
@@ -69,6 +72,15 @@ void timerIsr()
   right_wheel_vel_pub.publish(&right_wheel_vel); // publishes in mt/sec
   EncoderLeftWheel.write(0); // reset encoders to zero
   EncoderRightWheel.write(0);
+  // differential drive to unicycle equations:
+  // mean velocity, the velocity of the center between the two wheels:
+  base_link_velocity.linear.x = (left_wheel_vel.data + right_wheel_vel.data)/2;
+  base_link_velocity.linear.y = 0;
+  base_link_velocity.linear.z = 0;
+  base_link_velocity.angular.x = 0;
+  base_link_velocity.angular.y = 0;
+  base_link_velocity.angular.z = (right_wheel_vel.data - left_wheel_vel.data)/AXIS; // ((rightTravel - leftTravel) / AXIS) / deltaTime
+  base_link_velocity_pub.publish(&base_link_velocity);
   Timer1.attachInterrupt( timerIsr );  //enable the timer
 }
 
@@ -103,7 +115,6 @@ void cmdVelCB( const geometry_msgs::Twist& twist)
   // unicycle to differential drive equations
   // linear.x = forward velocity (mt/sec), angular.z = angular velocity (rad/sec)
   // angular velocity of wheels in rad/sec, counter-clock-wise and clock-wise respectively:
-  // complies to right-hand-rule: twist.angular.z > 0: turn left, twist.angular.z < 0 : turn right
   float left_wheel_radians = gain * (2 * twist.linear.x - twist.angular.z * AXIS) / (2 * RADIUS);
   float right_wheel_radians = gain * (2 * twist.linear.x + twist.angular.z * AXIS) / (2 * RADIUS);
   // transform angular velocities (rad/sec) to linear velocities (mt/sec):
@@ -129,6 +140,7 @@ void setup()
   // Publish speed of wheels
   nh.advertise(left_wheel_vel_pub);
   nh.advertise(right_wheel_vel_pub);
+  nh.advertise(base_link_velocity_pub);
   Timer1.attachInterrupt( timerIsr ); // enable the timer
 }
 
