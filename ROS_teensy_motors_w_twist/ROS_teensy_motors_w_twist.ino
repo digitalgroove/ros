@@ -43,10 +43,10 @@ float toHigh = 63; // max addmisible serial value for Sabertooth [int]
 ros::NodeHandle_<ArduinoHardware, 25, 25, 512, 512> nh; 
 
 // For debugging: Publish serial command send to motor driver
-std_msgs::Int16 left_wheel_serial_cmd;  // variable declaration
-ros::Publisher left_wheel_serial_cmd_pub("/left_wheel_serial_cmd", &left_wheel_serial_cmd);
-std_msgs::Int16 right_wheel_serial_cmd;  // variable declaration
-ros::Publisher right_wheel_serial_cmd_pub("/right_wheel_serial_cmd", &right_wheel_serial_cmd);
+//std_msgs::Int16 left_wheel_serial_cmd;  // variable declaration
+//ros::Publisher left_wheel_serial_cmd_pub("/left_wheel_serial_cmd", &left_wheel_serial_cmd);
+//std_msgs::Int16 right_wheel_serial_cmd;  // variable declaration
+//ros::Publisher right_wheel_serial_cmd_pub("/right_wheel_serial_cmd", &right_wheel_serial_cmd);
 
 // Initialize variables used to publish wheel velocities
 std_msgs::Float32 left_wheel_vel; // variable declaration
@@ -135,9 +135,9 @@ void setup()
   nh.subscribe(subCmdRight);
   nh.subscribe(subCmdLeft);
   nh.subscribe(subCmdVel);
-  // Publish serial command send to motor driver 
-  nh.advertise(left_wheel_serial_cmd_pub);
-  nh.advertise(right_wheel_serial_cmd_pub);
+  // For debugging: Publish serial command send to motor driver 
+  // nh.advertise(left_wheel_serial_cmd_pub);
+  // nh.advertise(right_wheel_serial_cmd_pub);
   // Publish speed of wheels
   nh.advertise(left_wheel_vel_pub);
   nh.advertise(right_wheel_vel_pub);
@@ -162,9 +162,9 @@ void moveLeftMotor(float leftMsValue)
   double leftMsScaled = mapf(leftMsValue, cmdMin, cmdMax, toLow, toHigh);
   int leftCmdSerial = int(leftMsScaled); // typecast
   Serial2.write(setmotor(1, leftCmdSerial));   // move left motor
-  //Publish serial command send to motor driver 
-  left_wheel_serial_cmd.data = leftCmdSerial;
-  left_wheel_serial_cmd_pub.publish(&left_wheel_serial_cmd);
+  // For debugging: Publish serial command send to motor driver 
+  // left_wheel_serial_cmd.data = leftCmdSerial;
+  // left_wheel_serial_cmd_pub.publish(&left_wheel_serial_cmd);
 }
 
 void moveRightMotor(float rightMsValue)
@@ -179,9 +179,9 @@ void moveRightMotor(float rightMsValue)
   double rightMsScaled = mapf(rightMsValue, cmdMin, cmdMax, toLow, toHigh);
   int rightCmdSerial = int(rightMsScaled); // typecast
   Serial2.write(setmotor(2, rightCmdSerial));  // move right motor
-  //Publish serial command send to motor driver 
-  right_wheel_serial_cmd.data = rightCmdSerial;
-  right_wheel_serial_cmd_pub.publish(&right_wheel_serial_cmd);  
+  // For debugging: Publish serial command send to motor driver 
+  // right_wheel_serial_cmd.data = rightCmdSerial;
+  // right_wheel_serial_cmd_pub.publish(&right_wheel_serial_cmd);  
 }
 
 byte setmotor(byte motor, int power)
