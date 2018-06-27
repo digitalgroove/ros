@@ -56,7 +56,7 @@ from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from tf.broadcaster import TransformBroadcaster
-from std_msgs.msg import Int16, Int64
+from std_msgs.msg import Int16
 
 #############################################################################
 class DiffTf:
@@ -71,14 +71,15 @@ class DiffTf:
 
         #### parameters #######
         self.rate = rospy.get_param('~rate',10.0)  # the rate at which to publish the transform
-        self.ticks_meter = float(rospy.get_param('ticks_meter', 50))  # The number of wheel encoder ticks per meter of travel
-        self.base_width = float(rospy.get_param('~base_width', 0.3)) # The wheel base width in meters
+        # Wheel diameter: 4 inch = 0.1016 mt, circumference = 0,31919 mt, in 1 mt = 3,13293 rotations, 4096 ticks, 1 mt = 12832,482 ticks
+        self.ticks_meter = float(rospy.get_param('ticks_meter', 12832.482))  # The number of wheel encoder ticks per meter of travel.
+        self.base_width = float(rospy.get_param('~base_width', 0.385)) # The wheel base width in meters
 
         self.base_frame_id = rospy.get_param('~base_frame_id','base_footprint') # the name of the base frame of the robot
         self.odom_frame_id = rospy.get_param('~odom_frame_id', 'odom') # the name of the odometry reference frame
 
-        self.encoder_min = rospy.get_param('encoder_min', -2147483648)
-        self.encoder_max = rospy.get_param('encoder_max', 2147483648)
+        self.encoder_min = rospy.get_param('encoder_min', -32767) # the counter should be less than max value of an Int16 (32767)
+        self.encoder_max = rospy.get_param('encoder_max', 32767)
         self.encoder_low_wrap = rospy.get_param('wheel_low_wrap', (self.encoder_max - self.encoder_min) * 0.3 + self.encoder_min )
         self.encoder_high_wrap = rospy.get_param('wheel_high_wrap', (self.encoder_max - self.encoder_min) * 0.7 + self.encoder_min )
 
@@ -102,8 +103,8 @@ class DiffTf:
         self.then = rospy.Time.now()
 
         # subscriptions
-        rospy.Subscriber("lwheel", Int64, self.lwheelCallback)
-        rospy.Subscriber("rwheel", Int64, self.rwheelCallback)
+        rospy.Subscriber("left_wheel_ticks", Int16, self.lwheelCallback)
+        rospy.Subscriber("right_wheel_ticks", Int16, self.rwheelCallback)
         self.odomPub = rospy.Publisher("odom", Odometry,queue_size=10)
         self.odomBroadcaster = TransformBroadcaster()
 
