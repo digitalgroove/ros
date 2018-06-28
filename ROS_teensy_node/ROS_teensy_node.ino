@@ -1,127 +1,81 @@
+#define USE_USBCON // eliminates sync error of serial_node with a Teensy
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
 #include <Encoder.h>
 
+#define LEncoderA 2 // define encoder pins
+#define LEncoderB 4
+#define REncoderA 3
+#define REncoderB 6
 
-///////////////pins/////////////////////////////////////
-#define Button1  24 
-#define Button2  26 
-#define Button3  28 
-#define Button4  30 
-#define Button5  30 //TODO popravi povezavo pin 33-32 
-#define Button6  36
-#define Button7  34
-#define Button8  38
-
-#define LMotPWMPin  45 
-#define RMotPWMPin  46
-#define LMotAPin 35
-#define LMotBPin 39
-#define RMotAPin 37
-#define RMotBPin 41
-int LMotor = 1;
-int RMotor = 0;
-
-#define IsenPin A8
-
-#define GLEDPin 9
-#define BLEDPin 8
-
-#define LEncoderA 21
-#define LEncoderB 20
-#define REncoderA 2
-#define REncoderB 3
-
-
+// For mapping admissible input values to admissible serial command values
+float cmdMin = -0.3; // min addmisible input command value [mt/s]
+float cmdMax = 0.3; // max addmisible input command value [mt/s]
+float toLow = -63; // min addmisible serial value for Sabertooth [int]
+float toHigh = 63; // max addmisible serial value for Sabertooth [int]
 
 //////////////////////////////////////////////////////////////////////////////////////
 
-float WheelSeparation = 0.6;
-float WheelDiameter = 0.2;
-int TPR = 6400; //Encoder ticks per rotation 
-int IMax = 300;
-int AccParam = 3; //acceleration multiplier. 
+float AXIS = 0.385; //distance between wheels in meters
+float RADIUS = 0.0508; //wheel radius in meters (2 inch)
+int TPR = 4096; //Encoder ticks per rotation 4x decoding
 //sudo vars//////////////////////////////////////////////////////////////////////////
-int OdomWait = 3;
+int OdomWait = 3; //first couple of times dont publish odom
 int OdomCount = 0;
-double WCS[2] = {0,0};
+double WCS[2] = {0,0}; //global var WCS: write command speed
 
 //ROS variables//////////////////////////////////////////////////////////////////////
-ros::NodeHandle nh;
+/* ROS handler, instantiate with bigger buffer memory */
+ros::NodeHandle_<ArduinoHardware, 25, 25, 512, 512> nh;
 ////ROS publisher
 geometry_msgs::Twist odom_msg;
-ros::Publisher Pub ("ard_odom", &odom_msg);
+ros::Publisher Pub ("teensy_odom", &odom_msg);
 geometry_msgs::Twist debug_msg;
 ros::Publisher Debug ("debug", &debug_msg);
-//ROS subscriber
 
-void messageCb( const geometry_msgs::Twist& CVel){
-	//geometry_msgs::Twist twist = twist_msg;   
-    double vel_x = CVel.linear.x;
-    double vel_th = CVel.angular.z;
-    double right_vel = 0.0;
-    double left_vel = 0.0;
-
-    // turning
-    if(vel_x == 0){  
-        right_vel = vel_th * WheelSeparation / 2.0;
-        left_vel = (-1) * right_vel;
-    }
-    // forward / backward
-    else if(vel_th == 0){ 
-        left_vel = right_vel = vel_x;
-    }
-    // moving doing arcs
-    else{ 
-        left_vel = vel_x - vel_th * WheelSeparation / 2.0;
-        right_vel = vel_x + vel_th * WheelSeparation / 2.0;
-    }
-    //write new command speeds to global vars 
-    WCS[0] = left_vel;
-    WCS[1] = right_vel;
+void cmdVelCB( const geometry_msgs::Twist& twist)
+// Read from topic cmd_vel
+// The linear speed command signals are expected to be between -0.3 and 0.3 [mts/s]
+// Example: $ rostopic pub /cmd_vel geometry_msgs/Twist -r 3 -- '[0.2,0.0,0.0]' '[0.0, 0.0, 0.0]'
+// Motors should stop with a zero value.
+{
+  int gain = 1;
+  // unicycle to differential drive equations
+  // linear.x = forward velocity (mt/sec), angular.z = angular velocity (rad/sec)
+  // angular velocity of wheels in rad/sec, counter-clock-wise and clock-wise respectively:
+  float left_wheel_radians = gain * (2 * twist.linear.x - twist.angular.z * AXIS) / (2 * RADIUS);
+  float right_wheel_radians = gain * (2 * twist.linear.x + twist.angular.z * AXIS) / (2 * RADIUS);
+  // transform angular velocities (rad/sec) to linear velocities (mt/sec):
+  WCS[0] = left_wheel_radians * RADIUS; //write new command speeds to global vars
+  WCS[1] = right_wheel_radians * RADIUS;
 }
 
-ros::Subscriber<geometry_msgs::Twist> Sub("cmd_vel", &messageCb );
-
-/////////////////////////////////////////////////////////////////////////////////////
-int Button[] = {Button1, Button2, Button3, Button4, Button5, Button6, Button7, Button8};
-int ButtonPress[] = {0,0,0,0,0,0,0,0}; 
-
-
-//Motor vars/////////////////////////////////////////////////////////////////////////
-#define CW   1
-#define CCW  2
-int inApin[2] = {LMotAPin, RMotAPin};  // INA: Clockwise input
-int inBpin[2] = {LMotBPin, RMotBPin}; // INB: Counter-clockwise input
-int pwmpin[2] = {LMotPWMPin, RMotPWMPin}; // PWM input
-int MotorNum[2] = {LMotor, RMotor};
-
-//encoder vars
+ros::Subscriber<geometry_msgs::Twist> subCmdVel("cmd_vel", cmdVelCB);
+// Create two Encoder objects, using 2 pins for each:
 Encoder LEncoder(LEncoderA, LEncoderB);
 Encoder REncoder(REncoderA, REncoderB);
 
 long EncoderVal[2] = {0,0};
-double DDis[2] = {0,0};
+double DDis[2] = {0,0}; //diferential of distance in meters
 long Time[2] = {0,0};
 
 //debug
-double Vels[2] = {0,0};
-int CVEL[2]= {0,0};
-int Mspeeds[2] = {0,0};
+double Vels[2] = {0,0}; // Wheel velocities [mt/s] from encoders
 
 ///program///////////////////////////////////////////////////////////////////////////
 void setup()
 {
-	nh.getHardware()->setBaud(115200);
-    nh.initNode();	
+    Serial2.begin(9600); // initialize serial2 port, baud rate must match DIP switches
+    nh.getHardware()->setBaud(57600); // default is 57600, also modify launch file of serial_node
+    nh.initNode();
     nh.advertise(Pub);
     nh.advertise(Debug);
-    nh.subscribe(Sub);
+    nh.subscribe(subCmdVel);
 
-    nh.getParam("/serial_node/WheelSeparation", &WheelSeparation,1);
-    nh.getParam("/serial_node/WheelDiameter", &WheelDiameter,1);
-    nh.getParam("/serial_node/IMax", &IMax,1);
-    nh.getParam("/serial_node/AccParam", &AccParam,1);
+    // nh.getParam("/serial_node/WheelSeparation", &WheelSeparation,1);
+    // nh.getParam("/serial_node/WheelDiameter", &WheelDiameter,1);
+    // nh.getParam("/serial_node/IMax", &IMax,1);
+    // nh.getParam("/serial_node/AccParam", &AccParam,1);
 
 
 }
@@ -129,51 +83,49 @@ void setup()
 void loop(){
 
     nh.spinOnce();
-    
+
     //first couple of times dont publish odom
     if(OdomCount > OdomWait){
-	    odom_msg.linear.x = Vels[0];
-	    odom_msg.linear.y = Vels[1];
+	    odom_msg.linear.x = Vels[0]; // Left Wheel (TODO:change message type)
+	    odom_msg.linear.y = Vels[1]; // Right Wheel (TODO:change message type)
 		Pub.publish(&odom_msg);
 	}
 	else{OdomCount++;}
 
-    debug_msg.linear.x = WCS[0];
-    debug_msg.linear.y = Vels[0];
-    debug_msg.linear.z = Mspeeds[0];
-    debug_msg.angular.x = WCS[1];
-    debug_msg.angular.y = Vels[1];
-    debug_msg.angular.z= Mspeeds[1];
+    debug_msg.linear.x = WCS[0]; // Write command speed [mt/s]
+    debug_msg.linear.y = Vels[0]; // Wheel velocities [mt/s] from encoders
+    debug_msg.angular.x = WCS[1]; // Write command speed [mt/s]
+    debug_msg.angular.y = Vels[1]; // Wheel velocities [mt/s] from encoders
 
 
     Debug.publish(&debug_msg);
 
-    //safeswitch
-    if(CheckBumpers()){
-    	WCS[0]=0;
-    	WCS[1]=0;
-    }
+    // //safeswitch
+    // if(CheckBumpers()){
+    // 	WCS[0]=0;
+    // 	WCS[1]=0;
+    // }
 
-    MotorWrite();	//Takes WCS and corrects speed of motors with encoders    
+    MotorWrite(); // send cmd to motors, read encoder values
 
-    delay(3);
+    delay(100);
 }
 
 
-int CheckBumpers(){
-	int ToReturn = 0;
-	for(int i = 0;i<8;i++){
-		if(digitalRead(Button[i])) ToReturn = 1;
-	}
-	return ToReturn;
-}
+// int CheckBumpers(){
+// 	int ToReturn = 0;
+// 	for(int i = 0;i<8;i++){
+// 		if(digitalRead(Button[i])) ToReturn = 1;
+// 	}
+// 	return ToReturn;
+// }
 
 //encoder code//////////////////////////////////////////////////////////
 
 //motor write speed - in motor units
 double MWS[2]= {0,0};
 
-double CorrectedSpeed(int M, double CVel){
+double EncoderSpeed(int M){
 	//if fist time in program return 0 and init time vars
 	if(Time[0]==0 && Time[1] == 0){
 		Time[0] = millis();
@@ -182,13 +134,13 @@ double CorrectedSpeed(int M, double CVel){
 	}
 
 	//read encoder ticks
-	if(M == LMotor){
+	if(M == 0){
 		EncoderVal[0] = LEncoder.read();
-		LEncoder.write(0);
+		LEncoder.write(0); // reset encoder to zero
 	}
-	if(M == RMotor){
-		EncoderVal[1] = REncoder.read();
-		REncoder.write(0);
+	if(M == 1){
+		EncoderVal[1] = -1*REncoder.read(); // sign change (R-motor turns CW, R-encoder CCW when robot moves forward)
+		REncoder.write(0); // reset encoder to zero
 	}
 
 	//differencial of time in seconds
@@ -199,80 +151,93 @@ double CorrectedSpeed(int M, double CVel){
 
 	//diferential of distance in meters
 	DDis[M] = TicksToMeters(EncoderVal[M]);
-	
+
 	//calculate short term measured velocity
 	double EVel = (DDis[M]/DTime)*1000;
-	
-	//save to publish to /ard_odom
-	Vels[M] = EVel;
 
-	EVel = abs(EVel);
-	CVel = abs(CVel);
-
-	double dif = EVel - CVel;
-
-	if(MWS[M]<60 && MWS[M]>=0){MWS[M]=MWS[M]-(dif*AccParam);}
-	if(MWS[M]>60){MWS[M]=59;}
-	if(MWS[M]<0){MWS[M]=0;}
-	
-	if(CVel == 0){MWS[M] = 0;}
-
-	//DEBUG
-	CVEL[M] = MWS[M];
-
-	return MWS[M];
+	// return encoder speed [mt/s] to publish to /teensy_odom [mt/s]
+    return EVel;
 
 }
 
 double TicksToMeters(int Ticks){
-	return (Ticks*3.14*WheelDiameter)/TPR;
+	return (Ticks*3.14*RADIUS*2)/TPR;
 }
 
 //motor codes///////////////////////////////////////////////////////////
 void MotorWrite(){
-	int DIR;
 
 	for(int i = 0; i<2; i++){
-		//correct turns of motors
-		DIR = CW;
-		if((WCS[i]>0&&i==MotorNum[0])||(WCS[i]<0&&i==MotorNum[1])){DIR=CCW;}
 
-		//correct speed with encoder data
-		double MSpeed = CorrectedSpeed(i, WCS[i]);
-		
-		//if current is too high, stop robot
-		if(analogRead(IsenPin)>IMax) MSpeed = 0;
-		
-		Mspeeds[i]=MSpeed;
+		//encoder data
+		Vels[i] = EncoderSpeed(i);
 
-		//debug
-		//MSpeed = abs(WCS[i]);
-		//if(MSpeed>30) MSpeed = 0;
-		
-		motorGo(MotorNum[i], DIR, int(MSpeed));
-						
-				
 	}
+    moveLeftMotor(WCS[0]);  // move left motor
+    moveRightMotor(WCS[1]);  // move right motor
+
 }
 
 
-void motorGo(uint8_t motor, uint8_t direct, uint8_t pwm)
+void moveLeftMotor(float leftMsValue)
 {
-  if (motor <= 1){
-    if (direct <=4){
-      // Set inA[motor]
-      if (direct <=1)
-        digitalWrite(inApin[motor], HIGH);
-      else
-        digitalWrite(inApin[motor], LOW);
-
-      // Set inB[motor]
-      if ((direct==0)||(direct==2))
-        digitalWrite(inBpin[motor], HIGH);
-      else
-        digitalWrite(inBpin[motor], LOW);
-
-      analogWrite(pwmpin[motor], pwm);
-    }
+  if (leftMsValue >= cmdMax) {
+    leftMsValue = cmdMax; // speed cap
   }
+  else if (leftMsValue <= cmdMin) {
+          leftMsValue = cmdMin; // speed cap
+  }
+  // map mt/s speed value to a valid value for simple serial motor input
+  double leftMsScaled = mapf(leftMsValue, cmdMin, cmdMax, toLow, toHigh);
+  int leftCmdSerial = int(leftMsScaled); // typecast
+  Serial2.write(setmotor(1, leftCmdSerial));   // move left motor
+  // For debugging: Publish serial command send to motor driver
+  // left_wheel_serial_cmd.data = leftCmdSerial;
+  // left_wheel_serial_cmd_pub.publish(&left_wheel_serial_cmd);
+}
+
+void moveRightMotor(float rightMsValue)
+{
+  if (rightMsValue >= cmdMax) {
+    rightMsValue = cmdMax; // speed cap
+  }
+  else if (rightMsValue <= cmdMin) {
+          rightMsValue = cmdMin; // speed cap
+  }
+  // map mt/s speed value to a valid value for simple serial motor input
+  double rightMsScaled = mapf(rightMsValue, cmdMin, cmdMax, toLow, toHigh);
+  int rightCmdSerial = int(rightMsScaled); // typecast
+  Serial2.write(setmotor(2, rightCmdSerial));  // move right motor
+  // For debugging: Publish serial command send to motor driver
+  // right_wheel_serial_cmd.data = rightCmdSerial;
+  // right_wheel_serial_cmd_pub.publish(&right_wheel_serial_cmd);
+}
+
+byte setmotor(byte motor, int power)
+/*
+Because Sabertooth controls two motors with one 8 byte character, when operating in Simplified
+Serial mode, each motor has 7 bits of resolution. Sending a character between 1 and 127 will
+control motor 1. 1 is full reverse, 64 is stop and 127 is full forward. Sending a character between
+128 and 255 will control motor 2. 128 is full reverse, 192 is stop and 255 is full forward.
+Sending a value of 0 will shut down both motors.
+*/
+{
+  byte command = 0;
+  power = constrain(power, -63, 63);
+
+  if (motor == 1)
+  {
+    command = 64 + power;
+  }
+  else if (motor == 2)
+  {
+    command = 191 + power ;
+  }
+  return command;
+}
+
+double mapf(double x, double in_min, double in_max, double out_min, double out_max)
+// Arduino map function for float values
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
