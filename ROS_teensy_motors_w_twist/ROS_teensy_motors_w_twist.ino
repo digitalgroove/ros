@@ -21,7 +21,7 @@
 #define right_encoder_ChA 3
 #define right_encoder_ChB 6
 
-Encoder EncoderLeftWheel(left_encoder_ChA, left_encoder_ChB); // Create an Encoder object, using 2 pins. 
+Encoder EncoderLeftWheel(left_encoder_ChA, left_encoder_ChB); // Create an Encoder object, using 2 pins.
 Encoder EncoderRightWheel(right_encoder_ChA, right_encoder_ChB);
 
 long counter_left  = 0; // initialize encoder counters
@@ -40,7 +40,7 @@ float toHigh = 63; // max addmisible serial value for Sabertooth [int]
 #define TICKS 4096 // encoder pulses per rotation 4x decoding
 
 /* ROS handler, instantiate with bigger buffer memory */
-ros::NodeHandle_<ArduinoHardware, 25, 25, 512, 512> nh; 
+ros::NodeHandle_<ArduinoHardware, 25, 25, 512, 512> nh;
 
 // For debugging: Publish serial command send to motor driver
 //std_msgs::Int16 left_wheel_serial_cmd;  // variable declaration
@@ -57,8 +57,14 @@ ros::Publisher right_wheel_vel_pub("/right_wheel_velocity", &right_wheel_vel);
 geometry_msgs::Twist base_link_velocity;
 ros::Publisher base_link_velocity_pub("/base_link_velocity", &base_link_velocity);
 
+// Publish encoder ticks so that they can be processed for odom and tf on a python node
+std_msgs::Int16 left_wheel_ticks;  // instantiate a message object
+ros::Publisher left_wheel_ticks_pub("/left_wheel_ticks", &left_wheel_ticks); //instantiate a Publisher with a topic name and message object
+std_msgs::Int16 right_wheel_ticks;  // instantiate a message object
+ros::Publisher right_wheel_ticks_pub("/right_wheel_ticks", &right_wheel_ticks); //instantiate a Publisher with a topic name and message object
+
 void timerIsr()
-// hardware timer to publish wheel velocity messages 
+// hardware timer to publish wheel velocity messages
 {
   Timer1.detachInterrupt();  //stop the timer
   // Calculate wheel speed
@@ -69,8 +75,12 @@ void timerIsr()
   counter_right = -1*EncoderRightWheel.read(); // sign change (R-motor turns CW, R-encoder CCW when robot moves forward)
   left_wheel_vel.data = float(counter_left)*((2*PII*RADIUS)/TICKS)*5; // counts at 5 Hz x 5 to get counts x sec
   left_wheel_vel_pub.publish(&left_wheel_vel); // publishes in mt/sec
+  left_wheel_ticks.data = counter_left; // assign encoder value to message object
+  left_wheel_ticks_pub.publish(&left_wheel_ticks); // publishes encoder ticks
   right_wheel_vel.data = float(counter_right)*((2*PII*RADIUS)/TICKS)*5; // counts at 5 Hz x 5 to get counts x sec
   right_wheel_vel_pub.publish(&right_wheel_vel); // publishes in mt/sec
+  right_wheel_ticks.data = counter_right; // assign encoder value to message object
+  right_wheel_ticks_pub.publish(&right_wheel_ticks); // publishes encoder ticks
   EncoderLeftWheel.write(0); // reset encoders to zero
   EncoderRightWheel.write(0);
   // differential drive to unicycle equations:
@@ -86,28 +96,28 @@ void timerIsr()
 }
 
 void cmdLeftWheelCB( const std_msgs::Int16& msg)
-// Read from topic cmd_left_wheel 
+// Read from topic cmd_left_wheel
 // The command signals are expected to be between -63 and 63.
 // Example: $ rostopic pub /cmd_left_wheel std_msgs/Int16 "data: 30
 // Motors should stop with a zero value.
 {
-  Serial2.write(setmotor(1, msg.data));   // move left motor 
+  Serial2.write(setmotor(1, msg.data));   // move left motor
 }
 
 void cmdRightWheelCB( const std_msgs::Int16& msg)
-// Read from topic cmd_right_wheel 
+// Read from topic cmd_right_wheel
 // The command signals are expected to be between -63 and 63.
 // Example: $ rostopic pub /cmd_right_wheel std_msgs/Int16 "data: 30
 // Motors should stop with a zero value.
 {
-    Serial2.write(setmotor(2, msg.data));   // move right motor 
+    Serial2.write(setmotor(2, msg.data));   // move right motor
 }
 
 ros::Subscriber<std_msgs::Int16> subCmdLeft("cmd_left_wheel", cmdLeftWheelCB );
 ros::Subscriber<std_msgs::Int16> subCmdRight("cmd_right_wheel",cmdRightWheelCB );
 
 void cmdVelCB( const geometry_msgs::Twist& twist)
-// Read from topic cmd_vel 
+// Read from topic cmd_vel
 // The linear speed command signals are expected to be between -0.3 and 0.3 [mts/s]
 // Example: $ rostopic pub /cmd_vel geometry_msgs/Twist -r 3 -- '[0.2,0.0,0.0]' '[0.0, 0.0, 0.0]'
 // Motors should stop with a zero value.
@@ -127,27 +137,29 @@ void cmdVelCB( const geometry_msgs::Twist& twist)
 
 ros::Subscriber<geometry_msgs::Twist> subCmdVel("cmd_vel", cmdVelCB);
 
-void setup() 
+void setup()
 {
-  Serial2.begin(9600); // initialize serial2 port, baud rate must match DIP switches 
+  Serial2.begin(9600); // initialize serial2 port, baud rate must match DIP switches
   Timer1.initialize(LOOP_TIME); // init timer for encoders
   nh.initNode();
   nh.subscribe(subCmdRight);
   nh.subscribe(subCmdLeft);
   nh.subscribe(subCmdVel);
-  // For debugging: Publish serial command send to motor driver 
+  // For debugging: Publish serial command send to motor driver
   // nh.advertise(left_wheel_serial_cmd_pub);
   // nh.advertise(right_wheel_serial_cmd_pub);
   // Publish speed of wheels
   nh.advertise(left_wheel_vel_pub);
   nh.advertise(right_wheel_vel_pub);
   nh.advertise(base_link_velocity_pub);
+  nh.advertise(left_wheel_ticks_pub); // Publish encoder counts for each wheel
+  nh.advertise(right_wheel_ticks_pub);
   Timer1.attachInterrupt( timerIsr ); // enable the timer
 }
 
-void loop() 
-{ 
-    nh.spinOnce();  
+void loop()
+{
+    nh.spinOnce();
 }
 
 void moveLeftMotor(float leftMsValue)
@@ -158,11 +170,11 @@ void moveLeftMotor(float leftMsValue)
   else if (leftMsValue <= cmdMin) {
           leftMsValue = cmdMin; // speed cap
   }
-  // map mt/s speed value to a valid value for simple serial motor input 
+  // map mt/s speed value to a valid value for simple serial motor input
   double leftMsScaled = mapf(leftMsValue, cmdMin, cmdMax, toLow, toHigh);
   int leftCmdSerial = int(leftMsScaled); // typecast
   Serial2.write(setmotor(1, leftCmdSerial));   // move left motor
-  // For debugging: Publish serial command send to motor driver 
+  // For debugging: Publish serial command send to motor driver
   // left_wheel_serial_cmd.data = leftCmdSerial;
   // left_wheel_serial_cmd_pub.publish(&left_wheel_serial_cmd);
 }
@@ -175,13 +187,13 @@ void moveRightMotor(float rightMsValue)
   else if (rightMsValue <= cmdMin) {
           rightMsValue = cmdMin; // speed cap
   }
-  // map mt/s speed value to a valid value for simple serial motor input 
+  // map mt/s speed value to a valid value for simple serial motor input
   double rightMsScaled = mapf(rightMsValue, cmdMin, cmdMax, toLow, toHigh);
   int rightCmdSerial = int(rightMsScaled); // typecast
   Serial2.write(setmotor(2, rightCmdSerial));  // move right motor
-  // For debugging: Publish serial command send to motor driver 
+  // For debugging: Publish serial command send to motor driver
   // right_wheel_serial_cmd.data = rightCmdSerial;
-  // right_wheel_serial_cmd_pub.publish(&right_wheel_serial_cmd);  
+  // right_wheel_serial_cmd_pub.publish(&right_wheel_serial_cmd);
 }
 
 byte setmotor(byte motor, int power)
