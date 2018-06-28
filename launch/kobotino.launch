@@ -6,5 +6,5 @@
     <param name="baud" value="57600"/>
     <!-- default baut rate is 57600 -->
   </node>
-<node pkg="kobotino" type="diff_tf.py" name="diff_tf" output="screen"/>
+<node pkg="rosino" type="diff_tf.py" name="diff_tf" output="screen"/>
 </launch>
