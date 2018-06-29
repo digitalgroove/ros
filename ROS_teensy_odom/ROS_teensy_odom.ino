@@ -24,8 +24,12 @@
 Encoder EncoderLeftWheel(left_encoder_ChA, left_encoder_ChB); // Create an Encoder object, using 2 pins.
 Encoder EncoderRightWheel(right_encoder_ChA, right_encoder_ChB);
 
-long counter_left  = 0; // initialize encoder counters
-long counter_right = 0;
+// output for pose estimation and input for get_new_heading_angle
+// initial_pose = (0, 0, 0), values are x, y and orientation theta
+// pose by wheel odometry could be initialized to a specific pose/orientation
+float x_r = 0.0; // x coordinate value in meters
+float y_r = 0.0; // y coordinate value in meters
+float theta_r = 0.0; // robot orientation in WC, in rad [0,2*Pi)
 
 // For mapping admissible input values to admissible serial command values
 float cmdMin = -0.3; // min addmisible input command value [mt/s]
@@ -48,20 +52,14 @@ ros::NodeHandle_<ArduinoHardware, 25, 25, 512, 512> nh;
 //std_msgs::Int16 right_wheel_serial_cmd;  // variable declaration
 //ros::Publisher right_wheel_serial_cmd_pub("/right_wheel_serial_cmd", &right_wheel_serial_cmd);
 
-// Initialize variables used to publish wheel velocities
-std_msgs::Float32 left_wheel_vel; // variable declaration
-ros::Publisher left_wheel_vel_pub("/left_wheel_velocity", &left_wheel_vel);
-std_msgs::Float32 right_wheel_vel; // variable declaration
-ros::Publisher right_wheel_vel_pub("/right_wheel_velocity", &right_wheel_vel);
+// Initialize variables used to publish position (x,y)
+std_msgs::Float32 x_pose; // variable declaration
+ros::Publisher x_pose_pub("/x_pose", &x_pose);
+std_msgs::Float32 y_pose; // variable declaration
+ros::Publisher y_pose_pub("/y_pose", &y_pose);
 
 geometry_msgs::Twist base_link_velocity;
 ros::Publisher base_link_velocity_pub("/base_link_velocity", &base_link_velocity);
-
-// Publish encoder ticks so that they can be processed for odom and tf on a python node
-std_msgs::Int16 left_wheel_ticks;  // instantiate a message object
-ros::Publisher left_wheel_ticks_pub("/left_wheel_ticks", &left_wheel_ticks); //instantiate a Publisher with a topic name and message object
-std_msgs::Int16 right_wheel_ticks;  // instantiate a message object
-ros::Publisher right_wheel_ticks_pub("/right_wheel_ticks", &right_wheel_ticks); //instantiate a Publisher with a topic name and message object
 
 void timerIsr()
 // hardware timer to publish wheel velocity messages
@@ -71,27 +69,20 @@ void timerIsr()
   // wheel circumference / counts per revolution = distance traveled per encoder count
   // velocity = (wheel circumference / counts per revolution) / time
   // Since RADIUS is in mt and Ticks is in 1/second then both are in meters/second:
-  counter_left = EncoderLeftWheel.read();
-  counter_right = -1*EncoderRightWheel.read(); // sign change (R-motor turns CW, R-encoder CCW when robot moves forward)
-  left_wheel_vel.data = float(counter_left)*((2*PII*RADIUS)/TICKS)*5; // counts at 5 Hz x 5 to get counts x sec
-  left_wheel_vel_pub.publish(&left_wheel_vel); // publishes in mt/sec
-  left_wheel_ticks.data = counter_left; // assign encoder value to message object
-  left_wheel_ticks_pub.publish(&left_wheel_ticks); // publishes encoder ticks
-  right_wheel_vel.data = float(counter_right)*((2*PII*RADIUS)/TICKS)*5; // counts at 5 Hz x 5 to get counts x sec
-  right_wheel_vel_pub.publish(&right_wheel_vel); // publishes in mt/sec
-  right_wheel_ticks.data = counter_right; // assign encoder value to message object
-  right_wheel_ticks_pub.publish(&right_wheel_ticks); // publishes encoder ticks
-  EncoderLeftWheel.write(0); // reset encoders to zero
-  EncoderRightWheel.write(0);
+  est_pose(&x_r, &y_r, &theta_r); // passing address-of
+  x_pose.data = x_r; // x coordinate position
+  x_pose_pub.publish(&x_pose); // publishes in mt/sec
+  y_pose.data = y_r; // y coordinate position
+  y_pose_pub.publish(&y_pose); // publishes in mt/sec
   // differential drive to unicycle equations:
   // mean velocity, the velocity of the center between the two wheels:
-  base_link_velocity.linear.x = (left_wheel_vel.data + right_wheel_vel.data)/2;
-  base_link_velocity.linear.y = 0;
-  base_link_velocity.linear.z = 0;
-  base_link_velocity.angular.x = 0;
-  base_link_velocity.angular.y = 0;
-  base_link_velocity.angular.z = (right_wheel_vel.data - left_wheel_vel.data)/AXIS; // ((rightTravel - leftTravel) / AXIS) / deltaTime
-  base_link_velocity_pub.publish(&base_link_velocity);
+//  base_link_velocity.linear.x = (left_wheel_vel.data + right_wheel_vel.data)/2;
+//  base_link_velocity.linear.y = 0;
+//  base_link_velocity.linear.z = 0;
+//  base_link_velocity.angular.x = 0;
+//  base_link_velocity.angular.y = 0;
+//  base_link_velocity.angular.z = (right_wheel_vel.data - left_wheel_vel.data)/AXIS; // ((rightTravel - leftTravel) / AXIS) / deltaTime
+//  base_link_velocity_pub.publish(&base_link_velocity);
   Timer1.attachInterrupt( timerIsr );  //enable the timer
 }
 
@@ -149,11 +140,9 @@ void setup()
   // nh.advertise(left_wheel_serial_cmd_pub);
   // nh.advertise(right_wheel_serial_cmd_pub);
   // Publish speed of wheels
-  nh.advertise(left_wheel_vel_pub);
-  nh.advertise(right_wheel_vel_pub);
+  nh.advertise(x_pose_pub);
+  nh.advertise(y_pose_pub);
   nh.advertise(base_link_velocity_pub);
-  nh.advertise(left_wheel_ticks_pub); // Publish encoder counts for each wheel
-  nh.advertise(right_wheel_ticks_pub);
   Timer1.attachInterrupt( timerIsr ); // enable the timer
 }
 
@@ -223,4 +212,61 @@ double mapf(double x, double in_min, double in_max, double out_min, double out_m
 // Arduino map function for float values
 {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+
+// Passes arguments by address, uses pointers to pass out values
+void est_pose(float * x_rPtr, float * y_rPtr, float * theta_rPtr)
+// get current coordinates with respect to initial position
+// estimate_pose() called in the loop()
+{
+
+// 1. Save the current encoder ticks for each wheel
+int current_L_ticks = EncoderLeftWheel.read();
+int current_R_ticks = -1*EncoderRightWheel.read(); // sign change (R-motor turns CW, R-encoder CCW when robot moves forward)
+// 2. Reset encoders to zero in order to start counting again
+EncoderLeftWheel.write(0);
+EncoderRightWheel.write(0);
+// 3. Calculate dt distance = wheel circumference*counts/counts per revolution
+float mt_per_tick = (2.0 * PII * RADIUS) / TICKS;
+// distance travelled by left wheel and right wheels (in meters)
+float distanceL = current_L_ticks * mt_per_tick;
+float distanceR = current_R_ticks * mt_per_tick;
+
+// 4. theta_dt calculation complies to positive CCW direction VERIFIED
+// this approximation works (in radians) for small angles
+float theta_dt = (distanceR-distanceL)/AXIS; // rad (dimensionless)
+// linearizes the non-linear system around the current state
+float meanDistance = (distanceL + distanceR) / 2.0;
+
+// TO-DO: calculate velocities
+// Vx = meanDistance / time_elapsed; // [mt/sec]
+// Vth = theta_dt / time_elapsed; // [rad/sec]
+
+// 5. Distance in x and y: (hypotenuse),cos,sen to calculate adjacent (x), opposite (y)
+// assumes a heading towards +X at the WCS at the start
+// forward means move towards positive X
+// turn left means change heading towards positive Y, positive theta_r
+float x_dt = meanDistance * cos(theta_dt); // complies with right-hand-rule
+float y_dt = meanDistance * sin(theta_dt); // complies with right-hand-rule
+
+// 6. Save the previous estimated pose for our next calculations
+// Updated automatically at the beginning of the calculation cycle using est_pose()
+float x_prev = *x_rPtr;
+float y_prev = *y_rPtr;
+float theta_prev = *theta_rPtr;
+// 7.
+// asign a value to whatever *x_rPtr, *y_rPtr and *theta_rPtr are pointing to
+*x_rPtr = x_prev + x_dt; // in meters
+*y_rPtr = y_prev + y_dt; // in meters
+
+// 8. normalize heading, so that theta is always between 0 and 2 Pi
+// above 2*Pi it wraps around and keeps increasing from 0
+if((theta_prev + theta_dt) >= 6.28318)
+    *theta_rPtr = (theta_prev + theta_dt) - 6.28318;
+// below 0 it wraps around and start decreasing from 2*Pi on
+else if((theta_prev + theta_dt) < 0)
+    *theta_rPtr = (theta_prev + theta_dt) + 6.28318;
+else
+    *theta_rPtr = theta_prev + theta_dt; // rad (dimensionless)
 }
